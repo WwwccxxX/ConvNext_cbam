@@ -9,7 +9,7 @@ import os
 from tqdm import tqdm
 
 from config import Config
-from isic_data_loader import get_data_loaders
+from data_loader import get_data_loaders
 from convnext_cbam import create_baseline_convnext, create_improved_convnext
 import torch.nn.functional as F
 
@@ -158,6 +158,13 @@ class Trainer:
         if epoch_accuracy > self.best_accuracy:
             self.best_accuracy = epoch_accuracy
             self.patience_counter = 0  # 重置耐心计数器
+
+            # 修复：创建一个可序列化的配置字典
+            config_dict = {
+                key: value for key, value in Config.__dict__.items()
+                if not key.startswith('_') and not callable(value)
+            }
+
             # 保存最佳模型
             torch.save({
                 'epoch': epoch,
@@ -166,6 +173,8 @@ class Trainer:
                 'scheduler_state_dict': self.scheduler.state_dict(),
                 'accuracy': epoch_accuracy,
                 'loss': epoch_loss,
+                'class_names': self.class_names,  # 添加类别名称
+                'config': config_dict  # 使用可序列化的配置字典
             }, os.path.join(self.save_dir, 'best_model.pth'))
             print(f"新的最佳准确率: {epoch_accuracy:.2f}%")
         else:
@@ -211,7 +220,6 @@ class Trainer:
         self.patience_counter = 0
         self.best_accuracy = 0.0
 
-
         for epoch in range(Config.epochs):
             if self.patience_counter >= Config.patience:
                 print(f"早停触发！在 epoch {epoch + 1} 停止训练")
@@ -247,10 +255,30 @@ class Trainer:
             'val_losses': self.val_losses,
             'train_accuracies': self.train_accuracies,
             'val_accuracies': self.val_accuracies,
-            'training_time': training_time
+            'training_time': training_time,
+            'class_names': self.class_names  # 保存类别名称
         }
 
         torch.save(training_info, os.path.join(self.save_dir, 'training_info.pth'))
+
+        # 修复：创建一个可序列化的配置字典
+        config_dict = {
+            key: value for key, value in Config.__dict__.items()
+            if not key.startswith('_') and not callable(value)
+        }
+
+        # 保存最终模型
+        torch.save({
+            'epoch': Config.epochs,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'accuracy': self.best_accuracy,
+            'class_names': self.class_names,  # 保存类别名称
+            'config': config_dict  # 使用可序列化的配置字典
+        }, os.path.join(self.save_dir, 'final_model.pth'))
+
+        print(f"最终模型已保存到: {os.path.join(self.save_dir, 'final_model.pth')}")
 
         return self.best_accuracy
 
@@ -288,6 +316,22 @@ def main():
     )
     baseline_accuracy = baseline_trainer.train()
 
+    # 修复：创建一个可序列化的配置字典
+    config_dict = {
+        key: value for key, value in Config.__dict__.items()
+        if not key.startswith('_') and not callable(value)
+    }
+
+    # 保存完整的基线模型用于推理
+    torch.save({
+        'model_state_dict': baseline_model.state_dict(),
+        'class_names': class_names,
+        'class_to_idx': class_to_idx,
+        'accuracy': baseline_accuracy,
+        'config': config_dict  # 使用可序列化的配置字典
+    }, 'baseline_model_complete.pth')
+    print("基线模型已保存为: baseline_model_complete.pth")
+
     # 训练改进模型（注释掉，先跑基线）
     """
     print("\n" + "="*50)
@@ -306,6 +350,16 @@ def main():
         class_names
     )
     improved_accuracy = improved_trainer.train()
+
+    # 保存完整的改进模型用于推理
+    torch.save({
+        'model_state_dict': improved_model.state_dict(),
+        'model_architecture': improved_model,
+        'class_names': class_names,
+        'class_to_idx': class_to_idx,
+        'accuracy': improved_accuracy
+    }, 'improved_model_complete.pth')
+    print("改进模型已保存为: improved_model_complete.pth")
 
     # 对比结果
     print("\n" + "="*50)

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import timm
 from cbam import CBAM
+import torchvision.models as models
 
 
 class ImprovedConvNeXtBlock(nn.Module):
@@ -90,5 +91,67 @@ def create_improved_convnext(model_name='convnext_tiny', num_classes=7, pretrain
 
 
 def create_baseline_convnext(model_name='convnext_tiny', num_classes=7, pretrained=True):
-    """创建基线ConvNeXt模型"""
-    return timm.create_model(model_name, pretrained=pretrained, num_classes=num_classes)
+    """创建基线ConvNeXt模型 - 使用torchvision的预训练权重"""
+    try:
+        if pretrained:
+            print("正在加载PyTorch官方预训练权重...")
+            # 使用torchvision的ConvNeXt，它有更好的下载稳定性
+            if model_name == 'convnext_tiny':
+                model = models.convnext_tiny(weights='IMAGENET1K_V1')
+            elif model_name == 'convnext_small':
+                model = models.convnext_small(weights='IMAGENET1K_V1')
+            elif model_name == 'convnext_base':
+                model = models.convnext_base(weights='IMAGENET1K_V1')
+            elif model_name == 'convnext_large':
+                model = models.convnext_large(weights='IMAGENET1K_V1')
+            else:
+                raise ValueError(f"不支持的模型: {model_name}")
+
+            # 修改分类头
+            in_features = model.classifier[2].in_features
+            model.classifier[2] = torch.nn.Linear(in_features, num_classes)
+            print("PyTorch官方预训练权重加载成功!")
+
+        else:
+            # 不使用预训练权重
+            print("使用随机初始化权重...")
+            if model_name == 'convnext_tiny':
+                model = models.convnext_tiny(weights=None)
+            elif model_name == 'convnext_small':
+                model = models.convnext_small(weights=None)
+            elif model_name == 'convnext_base':
+                model = models.convnext_base(weights=None)
+            elif model_name == 'convnext_large':
+                model = models.convnext_large(weights=None)
+            else:
+                raise ValueError(f"不支持的模型: {model_name}")
+
+            # 修改分类头
+            in_features = model.classifier[2].in_features
+            model.classifier[2] = torch.nn.Linear(in_features, num_classes)
+
+    except Exception as e:
+        print(f"预训练权重加载失败: {e}")
+        print("使用随机初始化权重...")
+        # 回退到随机初始化
+        if model_name == 'convnext_tiny':
+            model = models.convnext_tiny(weights=None)
+        elif model_name == 'convnext_small':
+            model = models.convnext_small(weights=None)
+        elif model_name == 'convnext_base':
+            model = models.convnext_base(weights=None)
+        elif model_name == 'convnext_large':
+            model = models.convnext_large(weights=None)
+        else:
+            raise ValueError(f"不支持的模型: {model_name}")
+
+        # 修改分类头
+        in_features = model.classifier[2].in_features
+        model.classifier[2] = torch.nn.Linear(in_features, num_classes)
+
+    # 打印模型信息
+    print(f"创建模型: {model_name}")
+    print(f"分类头: {in_features} -> {num_classes}")
+    print(f"参数总量: {sum(p.numel() for p in model.parameters()):,}")
+
+    return model
