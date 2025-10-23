@@ -12,7 +12,7 @@ from config import Config
 from data_loader import get_data_loaders
 from convnext_cbam import create_baseline_convnext, create_improved_convnext
 import torch.nn.functional as F
-from ConvNeXt_DPA import create_ConvNeXt_DPABlock
+from ConvNeXt_DPA import create_ConvNeXt_DPA
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 import matplotlib.pyplot as plt
@@ -53,11 +53,17 @@ class Trainer:
             weight_decay=Config.weight_decay
         )
 
-        self.scheduler = CosineAnnealingWarmRestarts(  # 这是学习率调度器
+        # self.scheduler = CosineAnnealingWarmRestarts(  # 这是学习率调度器
+        #     self.optimizer,
+        #     T_0=10,  # 第一次重启的周期
+        #     T_mult=2,  # 每次重启周期翻倍
+        #     eta_min=1e-6  # 最小学习率
+        # )
+
+        self.scheduler = CosineAnnealingLR(
             self.optimizer,
-            T_0=10,  # 第一次重启的周期
-            T_mult=2,  # 每次重启周期翻倍
-            eta_min=1e-6  # 最小学习率
+            T_max=Config.epochs,  # 100个epoch
+            eta_min=1e-6
         )
 
         # 训练记录
@@ -102,7 +108,7 @@ class Trainer:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 # 更新学习率
-                self.scheduler.step(epoch + batch_idx / len(self.train_loader))
+                #self.scheduler.step(epoch + batch_idx / len(self.train_loader))
 
             running_loss += loss.item() * Config.accumulation_steps
             _, predicted = outputs.max(1)
@@ -113,7 +119,8 @@ class Trainer:
             pbar.set_postfix({
                 'Loss': f'{loss.item() * Config.accumulation_steps:.4f}',
                 'Acc': f'{100. * correct / total:.2f}%',
-                'LR': f'{self.scheduler.get_last_lr()[0]:.2e}'
+                # 'LR': f'{self.scheduler.get_last_lr()[0]:.2e}'
+                'LR': f'{self.optimizer.param_groups[0]["lr"]:.2e}'
             })
 
         # 处理最后一个不完整的累积批次
@@ -343,7 +350,7 @@ def main():
     # 训练ConvNeXt_DPA模型
     print("\n" + "=" * 50)
     print("训练ConvNeXt_DPABlock模型...")
-    dpa_model = create_ConvNeXt_DPABlock(
+    dpa_model = create_ConvNeXt_DPA(
         model_name=Config.model_name,
         num_classes=Config.num_classes
     )
@@ -370,8 +377,8 @@ def main():
         'class_to_idx': class_to_idx,
         'accuracy': dpa_accuracy,
         'config': config_dict  # 使用可序列化的配置字典
-    }, 'ConvNeXt_DPABlock_model_complete.pth')
-    print("ConvNeXt_DPABlock模型已保存为: ConvNeXt_DPABlock_model_complete.pth")
+    }, 'ConvNeXt_DPA_model_complete.pth')
+    print("ConvNeXt_DPABlock模型已保存为: ConvNeXt_DPA_model_complete.pth")
 
 
 

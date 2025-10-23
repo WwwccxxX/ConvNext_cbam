@@ -13,7 +13,7 @@ class Config:
 
     # 训练参数
     epochs = 100
-    learning_rate = 1e-4
+    learning_rate = 3e-4
     weight_decay = 0.01
     warmup_epochs = 5
 
