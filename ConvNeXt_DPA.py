@@ -4,50 +4,62 @@ import timm
 from cbam import CBAM
 import torchvision.models as models
 
+class ConvNeXt_DPABlock(nn.Module):
+    """改进的ConvNeXt块，集成CBAM注意力和渐进式大核卷积分解"""
 
-class ImprovedConvNeXtBlock(nn.Module):
-    """改进的ConvNeXt块，集成CBAM注意力"""
-
-    def __init__(self, dim, drop_path=0., layer_scale_init_value=1e-6):
+    def __init__(self, dim, drop_path=0., layer_scale_init_value=1e-6, kernel_size=7):
         super().__init__()
+
+        # 🎯 创新点1：大核卷积分解
+        self.dwconv1 = nn.Conv2d(dim, dim, kernel_size=(1, kernel_size),
+                                 padding=(0, kernel_size // 2), groups=dim)
+        self.dwconv2 = nn.Conv2d(dim, dim, kernel_size=(kernel_size, 1),
+                                 padding=(kernel_size // 2, 0), groups=dim)
+
         # 原始ConvNeXt组件
-        self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim)
         self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, 4 * dim)
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(4 * dim, dim)
         self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
                                   requires_grad=True) if layer_scale_init_value > 0 else None
-        self.drop_path = nn.Identity()  # 简化，不使用drop path
+        self.drop_path = nn.Identity()
 
-        # 你的创新：添加CBAM注意力
+        # 🎯 创新点2：CBAM注意力
         self.cbam = CBAM(dim)
+
+        # 保存核大小信息用于显示
+        self.kernel_size = kernel_size
 
     def forward(self, x):
         input = x
-        x = self.dwconv(x)
-        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+
+        # 🎯 应用分解的大核卷积
+        x = self.dwconv1(x)  # 水平方向卷积 (1xK)
+        x = self.dwconv2(x)  # 垂直方向卷积 (Kx1)
+
+        # 后续保持不变
+        x = x.permute(0, 2, 3, 1)
         x = self.norm(x)
         x = self.pwconv1(x)
         x = self.act(x)
         x = self.pwconv2(x)
         if self.gamma is not None:
             x = self.gamma * x
-        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+        x = x.permute(0, 3, 1, 2)
 
-        # 你的创新在这里：应用CBAM注意力
+        # 🎯 应用CBAM注意力
         x = self.cbam(x)
 
         x = input + self.drop_path(x)
         return x
 
 
-def create_improved_convnext(model_name='convnext_tiny', num_classes=7, pretrained=True):
-    """创建改进的ConvNeXt模型 - 支持预训练权重"""
+def create_ConvNeXt_DPABlock(model_name='convnext_tiny', num_classes=7, pretrained=True):
+    """创建改进的ConvNeXt模型 - 支持预训练权重、CBAM和渐进式大核卷积"""
     try:
         if pretrained:
             print("正在为改进模型加载预训练权重...")
-            # 使用torchvision加载预训练权重
             if model_name == 'convnext_tiny':
                 original_model = models.convnext_tiny(weights='IMAGENET1K_V1')
             elif model_name == 'convnext_small':
@@ -60,7 +72,6 @@ def create_improved_convnext(model_name='convnext_tiny', num_classes=7, pretrain
                 raise ValueError(f"不支持的模型: {model_name}")
         else:
             print("改进模型使用随机初始化权重...")
-            # 不使用预训练权重
             if model_name == 'convnext_tiny':
                 original_model = models.convnext_tiny(weights=None)
             elif model_name == 'convnext_small':
@@ -75,7 +86,6 @@ def create_improved_convnext(model_name='convnext_tiny', num_classes=7, pretrain
     except Exception as e:
         print(f"改进模型预训练权重加载失败: {e}")
         print("使用随机初始化权重...")
-        # 回退到随机初始化
         if model_name == 'convnext_tiny':
             original_model = models.convnext_tiny(weights=None)
         elif model_name == 'convnext_small':
@@ -103,28 +113,39 @@ def create_improved_convnext(model_name='convnext_tiny', num_classes=7, pretrain
     else:
         raise ValueError(f"不支持的模型: {model_name}")
 
-    # 保存原始权重状态字典（用于初始化改进的块）
+    # 🎯 创新点3：渐进式核增长配置
+    # Stage1: 小核捕获局部纹理 → Stage4: 大核捕获全局形态
+    progressive_kernel_sizes = [7, 11, 13, 13]  # 随着网络加深，核逐渐变大
+
+    print(f"渐进式核增长配置: {progressive_kernel_sizes}")
+
+    # 保存原始权重状态字典
     original_state_dict = original_model.state_dict().copy()
 
     # 替换原始块为改进块
     stage_idx = 0
-    block_idx = 0
+    total_blocks_replaced = 0
 
-    # 遍历所有模块
     for name, module in original_model.named_children():
         if name.startswith('stages'):
-            # 这是卷积阶段
             stage = module
             new_stage_blocks = nn.ModuleList()
 
-            for block_idx_in_stage, block in enumerate(stage):
-                # 获取块的维度
-                block_dim = dims[stage_idx]
-                # 创建改进的块
-                improved_block = ImprovedConvNeXtBlock(block_dim)
+            # 获取当前阶段的核大小
+            current_stage_kernel = progressive_kernel_sizes[stage_idx]
+            print(
+                f"阶段 {stage_idx + 1}: 使用核大小 {current_stage_kernel}×{current_stage_kernel} (分解为 1×{current_stage_kernel} + {current_stage_kernel}×1)")
 
-                # 关键步骤：将原始块的权重复制到改进块中
-                # 复制基础ConvNeXt部分的权重
+            for block_idx_in_stage, block in enumerate(stage):
+                block_dim = dims[stage_idx]
+
+                # 创建改进的块，传入渐进式核大小
+                improved_block = ConvNeXt_DPABlock(
+                    block_dim,
+                    kernel_size=current_stage_kernel  # 🎯 传入当前阶段的核大小
+                )
+
+                # 权重复制（保持不变）
                 improved_block.dwconv.weight.data = block.dwconv.weight.data.clone()
                 improved_block.dwconv.bias.data = block.dwconv.bias.data.clone()
                 improved_block.norm.weight.data = block.norm.weight.data.clone()
@@ -138,106 +159,31 @@ def create_improved_convnext(model_name='convnext_tiny', num_classes=7, pretrain
                     improved_block.gamma.data = block.gamma.data.clone()
 
                 new_stage_blocks.append(improved_block)
-                block_idx += 1
+                total_blocks_replaced += 1
 
-            # 替换原始阶段
             setattr(original_model, name, new_stage_blocks)
             stage_idx += 1
-            block_idx = 0
 
-    # 修改分类头以适应我们的类别数
+    # 修改分类头
     in_features = original_model.classifier[2].in_features
     original_model.classifier[2] = nn.Linear(in_features, num_classes)
 
-    # 如果使用预训练权重，需要小心处理分类头
+    # 如果使用预训练权重，处理分类头
     if pretrained:
         print("正在初始化改进模型的分类头...")
-        # 分类头随机初始化，其他层保持预训练权重
-
-        # 获取当前状态字典
         current_state_dict = original_model.state_dict()
 
-        # 保留除了分类头之外的所有预训练权重
         for name, param in original_state_dict.items():
             if 'classifier' not in name and name in current_state_dict:
-                # 复制非分类头层的权重
                 current_state_dict[name].data.copy_(param.data)
 
-        # 加载更新后的状态字典
         original_model.load_state_dict(current_state_dict, strict=False)
 
     # 打印模型信息
-    print(f"创建改进模型: {model_name} + CBAM")
+    print(f"创建改进模型: {model_name} + CBAM + 渐进式大核卷积分解")
+    print(f"渐进式核增长: {progressive_kernel_sizes}")
     print(f"分类头: {in_features} -> {num_classes}")
+    print(f"改进块总数: {total_blocks_replaced}")
     print(f"参数总量: {sum(p.numel() for p in original_model.parameters()):,}")
-    print(f"CBAM注意力模块已集成到所有卷积块中")
 
     return original_model
-
-
-def create_baseline_convnext(model_name='convnext_tiny', num_classes=7, pretrained=True):
-    """创建基线ConvNeXt模型 - 使用torchvision的预训练权重"""
-    try:
-        if pretrained:
-            print("正在加载PyTorch官方预训练权重...")
-            # 使用torchvision的ConvNeXt，它有更好的下载稳定性
-            if model_name == 'convnext_tiny':
-                model = models.convnext_tiny(weights='IMAGENET1K_V1')
-            elif model_name == 'convnext_small':
-                model = models.convnext_small(weights='IMAGENET1K_V1')
-            elif model_name == 'convnext_base':
-                model = models.convnext_base(weights='IMAGENET1K_V1')
-            elif model_name == 'convnext_large':
-                model = models.convnext_large(weights='IMAGENET1K_V1')
-            else:
-                raise ValueError(f"不支持的模型: {model_name}")
-
-            # 修改分类头
-            in_features = model.classifier[2].in_features
-            model.classifier[2] = torch.nn.Linear(in_features, num_classes)
-            print("PyTorch官方预训练权重加载成功!")
-
-        else:
-            # 不使用预训练权重
-            print("使用随机初始化权重...")
-            if model_name == 'convnext_tiny':
-                model = models.convnext_tiny(weights=None)
-            elif model_name == 'convnext_small':
-                model = models.convnext_small(weights=None)
-            elif model_name == 'convnext_base':
-                model = models.convnext_base(weights=None)
-            elif model_name == 'convnext_large':
-                model = models.convnext_large(weights=None)
-            else:
-                raise ValueError(f"不支持的模型: {model_name}")
-
-            # 修改分类头
-            in_features = model.classifier[2].in_features
-            model.classifier[2] = torch.nn.Linear(in_features, num_classes)
-
-    except Exception as e:
-        print(f"预训练权重加载失败: {e}")
-        print("使用随机初始化权重...")
-        # 回退到随机初始化
-        if model_name == 'convnext_tiny':
-            model = models.convnext_tiny(weights=None)
-        elif model_name == 'convnext_small':
-            model = models.convnext_small(weights=None)
-        elif model_name == 'convnext_base':
-            model = models.convnext_base(weights=None)
-        elif model_name == 'convnext_large':
-            model = models.convnext_large(weights=None)
-        else:
-            raise ValueError(f"不支持的模型: {model_name}")
-
-        # 修改分类头
-        in_features = model.classifier[2].in_features
-        model.classifier[2] = torch.nn.Linear(in_features, num_classes)
-
-    # 打印模型信息
-    print(f"创建模型: {model_name}")
-    print(f"分类头: {in_features} -> {num_classes}")
-    print(f"参数总量: {sum(p.numel() for p in model.parameters()):,}")
-
-    return model
-

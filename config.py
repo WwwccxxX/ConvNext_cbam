@@ -12,9 +12,9 @@ class Config:
     num_classes = 7
 
     # 训练参数
-    epochs = 100  # 从150减少到100
-    learning_rate = 4e-4  # 从3e-4提高到4e-4
-    weight_decay = 0.01  # 从0.05降低到0.01
+    epochs = 100
+    learning_rate = 1e-4
+    weight_decay = 0.01
     warmup_epochs = 5
 
     # 早停参数

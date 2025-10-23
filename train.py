@@ -12,8 +12,14 @@ from config import Config
 from data_loader import get_data_loaders
 from convnext_cbam import create_baseline_convnext, create_improved_convnext
 import torch.nn.functional as F
-
+from ConvNeXt_DPA import create_ConvNeXt_DPABlock
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import os
+
+TRAIN_VERSION = "v1"  # 每次训练前手动修改这个数字
 
 
 class LabelSmoothingCrossEntropy(nn.Module):
@@ -189,27 +195,29 @@ class Trainer:
 
         # 损失曲线
         plt.subplot(1, 2, 1)
-        plt.plot(self.train_losses, label='训练损失')
-        plt.plot(self.val_losses, label='验证损失')
+        plt.plot(self.train_losses, label='Train Loss')
+        plt.plot(self.val_losses, label='Val Loss')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
-        plt.title(f'{self.model_name} - 损失曲线')
+        plt.title(f'{self.model_name} - Loss Curve')
         plt.legend()
         plt.grid(True)
 
         # 准确率曲线
         plt.subplot(1, 2, 2)
-        plt.plot(self.train_accuracies, label='训练准确率')
-        plt.plot(self.val_accuracies, label='验证准确率')
+        plt.plot(self.train_accuracies, label='Train Accuracy')
+        plt.plot(self.val_accuracies, label='Val Accuracy')
         plt.xlabel('Epoch')
         plt.ylabel('Accuracy (%)')
-        plt.title(f'{self.model_name} - 准确率曲线')
+        plt.title(f'{self.model_name} - Accuracy Curve')
         plt.legend()
         plt.grid(True)
 
         plt.tight_layout()
         plt.savefig(os.path.join(self.save_dir, 'training_history.png'), dpi=300, bbox_inches='tight')
         plt.show()
+
+        print(f"训练历史图已保存到: {os.path.join(self.save_dir, 'training_history.png')}")
 
     def train(self):
         """完整训练流程"""
@@ -298,76 +306,115 @@ def main():
     class_names = list(class_to_idx.keys())
     print(f"类别: {class_names}")
 
-    # 训练基线模型
+    # # 训练基线模型
+    # print("\n" + "=" * 50)
+    # print("训练基线ConvNeXt模型...")
+    # baseline_model = create_baseline_convnext(
+    #     model_name=Config.model_name,
+    #     num_classes=Config.num_classes
+    # )
+    # baseline_model = baseline_model.to(Config.device)
+    #
+    # baseline_trainer = Trainer(
+    #     baseline_model,
+    #     f"baseline_{Config.model_name}_{TRAIN_VERSION}",
+    #     train_loader,
+    #     val_loader,
+    #     class_names
+    # )
+    # baseline_accuracy = baseline_trainer.train()
+    #
+    # # 修复：创建一个可序列化的配置字典
+    # config_dict = {
+    #     key: value for key, value in Config.__dict__.items()
+    #     if not key.startswith('_') and not callable(value)
+    # }
+    #
+    # # 保存完整的基线模型用于推理
+    # torch.save({
+    #     'model_state_dict': baseline_model.state_dict(),
+    #     'class_names': class_names,
+    #     'class_to_idx': class_to_idx,
+    #     'accuracy': baseline_accuracy,
+    #     'config': config_dict  # 使用可序列化的配置字典
+    # }, 'baseline_model_complete.pth')
+    # print("基线模型已保存为: baseline_model_complete.pth")
+
+    # 训练ConvNeXt_DPA模型
     print("\n" + "=" * 50)
-    print("训练基线ConvNeXt模型...")
-    baseline_model = create_baseline_convnext(
+    print("训练ConvNeXt_DPABlock模型...")
+    dpa_model = create_ConvNeXt_DPABlock(
         model_name=Config.model_name,
         num_classes=Config.num_classes
     )
-    baseline_model = baseline_model.to(Config.device)
+    dpa_model = dpa_model.to(Config.device)
 
-    baseline_trainer = Trainer(
-        baseline_model,
-        f"baseline_{Config.model_name}",
+    dpa_trainer = Trainer(
+        dpa_model,
+        f"DPA_{Config.model_name}_{TRAIN_VERSION}",
         train_loader,
         val_loader,
         class_names
     )
-    baseline_accuracy = baseline_trainer.train()
+    dpa_accuracy = dpa_trainer.train()
 
-    # 修复：创建一个可序列化的配置字典
     config_dict = {
         key: value for key, value in Config.__dict__.items()
         if not key.startswith('_') and not callable(value)
     }
 
-    # 保存完整的基线模型用于推理
+    # 保存完整的DPA模型用于推理
     torch.save({
-        'model_state_dict': baseline_model.state_dict(),
+        'model_state_dict': dpa_model.state_dict(),
         'class_names': class_names,
         'class_to_idx': class_to_idx,
-        'accuracy': baseline_accuracy,
+        'accuracy': dpa_accuracy,
         'config': config_dict  # 使用可序列化的配置字典
-    }, 'baseline_model_complete.pth')
-    print("基线模型已保存为: baseline_model_complete.pth")
+    }, 'ConvNeXt_DPABlock_model_complete.pth')
+    print("ConvNeXt_DPABlock模型已保存为: ConvNeXt_DPABlock_model_complete.pth")
+
+
 
     # 训练改进模型（注释掉，先跑基线）
-    """
-    print("\n" + "="*50)
-    print("训练改进的ConvNeXt模型...")
-    improved_model = create_improved_convnext(
-        model_name=Config.model_name,
-        num_classes=Config.num_classes
-    )
-    improved_model = improved_model.to(Config.device)
 
-    improved_trainer = Trainer(
-        improved_model,
-        f"improved_{Config.model_name}",
-        train_loader,
-        val_loader,
-        class_names
-    )
-    improved_accuracy = improved_trainer.train()
+    # print("\n" + "="*50)
+    # print("训练改进的ConvNeXt模型...")
+    # improved_model = create_improved_convnext(
+    #     model_name=Config.model_name,
+    #     num_classes=Config.num_classes
+    # )
+    # improved_model = improved_model.to(Config.device)
 
-    # 保存完整的改进模型用于推理
-    torch.save({
-        'model_state_dict': improved_model.state_dict(),
-        'model_architecture': improved_model,
-        'class_names': class_names,
-        'class_to_idx': class_to_idx,
-        'accuracy': improved_accuracy
-    }, 'improved_model_complete.pth')
-    print("改进模型已保存为: improved_model_complete.pth")
+    # improved_trainer = Trainer(
+    #     improved_model,
+    #     f"improved_{Config.model_name}_{TRAIN_VERSION}",
+    #     train_loader,
+    #     val_loader,
+    #     class_names
+    # )
+    # improved_accuracy = improved_trainer.train()
 
-    # 对比结果
-    print("\n" + "="*50)
-    print("模型对比结果:")
-    print(f"基线模型 ({Config.model_name}): {baseline_accuracy:.2f}%")
-    print(f"改进模型 ({Config.model_name} + CBAM): {improved_accuracy:.2f}%")
-    print(f"性能提升: {improved_accuracy - baseline_accuracy:.2f}%")
-    """
+    # config_dict = {
+    #     key: value for key, value in Config.__dict__.items()
+    #     if not key.startswith('_') and not callable(value)
+    # }
+
+    # # 保存完整的改进模型用于推理
+    # torch.save({
+    #     'model_state_dict': improved_model.state_dict(),
+    #     'class_names': class_names,
+    #     'class_to_idx': class_to_idx,
+    #     'accuracy': improved_accuracy,
+    #     'config': config_dict  # 使用可序列化的配置字典
+    # }, 'improved_model_complete.pth')
+    # print("改进模型已保存为: improved_model_complete.pth")
+
+    # # 对比结果
+    # print("\n" + "="*50)
+    # print("模型对比结果:")
+    # print(f"基线模型 ({Config.model_name}): {baseline_accuracy:.2f}%")
+    # print(f"改进模型 ({Config.model_name} + CBAM): {improved_accuracy:.2f}%")
+    # print(f"性能提升: {improved_accuracy - baseline_accuracy:.2f}%")
 
 
 if __name__ == "__main__":
