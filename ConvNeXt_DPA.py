@@ -55,7 +55,7 @@ class ConvNeXt_DPABlock(nn.Module):
         return x
 
 
-def create_ConvNeXt_DPABlock(model_name='convnext_tiny', num_classes=7, pretrained=True):
+def create_ConvNeXt_DPA(model_name='convnext_tiny', num_classes=7, pretrained=True):
     """创建改进的ConvNeXt模型 - 支持预训练权重、CBAM和渐进式大核卷积"""
     try:
         if pretrained:
